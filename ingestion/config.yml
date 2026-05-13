@@ -1,0 +1,24 @@
+# config.yaml — local development settings
+# In Cloud Run, override these with environment variables instead.
+# Never commit real values — use config.yaml.example as reference.
+
+project_id: "your-gcp-project-id"
+gcs_bucket: "your-gcs-bucket-name"
+
+# Countries to track (ISO 3166-1 alpha-2 codes)
+geo_targets:
+  - TH   # Thailand
+  - US   # United States
+  - GB   # United Kingdom
+  - JP   # Japan
+  - SG   # Singapore
+
+# pytrends timeframe (see pytrends docs)
+timeframe: "now 7-d"
+
+# Polite delay between pytrends API calls (seconds)
+request_delay_seconds: 2
+
+# BigQuery dataset names
+bq_dataset_raw: "gtrends_raw"
+bq_dataset_transformed: "gtrends_mart"

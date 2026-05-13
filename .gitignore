@@ -1,0 +1,24 @@
+# Credentials — NEVER commit these
+*.json
+!config.yaml.example
+wif-credential-config.json
+service-account-key.json
+.env
+config.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+dist/
+*.egg-info/
+
+# dbt
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+
+# OS
+.DS_Store
+Thumbs.db

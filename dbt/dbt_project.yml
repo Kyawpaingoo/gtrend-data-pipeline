@@ -1,0 +1,19 @@
+name: gtrends
+version: "1.0.0"
+config-version: 2
+
+profile: gtrends
+
+model-paths: ["models"]
+test-paths: ["tests"]
+snapshot-paths: ["snapshots"]
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  gtrends:
+    staging:
+      +materialized: view
+      +schema: gtrends_staging
+    marts:
+      +materialized: table
+      +schema: gtrends_mart

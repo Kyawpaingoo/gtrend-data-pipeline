@@ -1,0 +1,38 @@
+version: 2
+
+sources:
+  - name: gtrends_raw
+    database: "{{ env_var('PROJECT_ID') }}"
+    schema: gtrends_raw
+    tables:
+      - name: raw_trending_searches
+        description: "Raw trending search keywords ingested from Google Trends via pytrends"
+      - name: raw_interest_over_time
+        description: "Raw interest-over-time scores for top trending keywords"
+      - name: raw_related_queries
+        description: "Raw related queries (top and rising) for trending keywords"
+
+models:
+  - name: stg_trending_searches
+    description: "Cleaned trending searches with geo and run date"
+    columns:
+      - name: keyword
+        tests: [not_null]
+      - name: geo
+        tests: [not_null]
+      - name: rank
+        tests: [not_null]
+
+  - name: stg_interest_over_time
+    description: "Cleaned interest-over-time with normalised timestamps"
+    columns:
+      - name: interest_value
+        tests: [not_null]
+
+  - name: fact_trending_searches
+    description: "Fact table joining trending keywords with their interest scores"
+    columns:
+      - name: trend_id
+        tests: [unique, not_null]
+      - name: geo
+        tests: [not_null]

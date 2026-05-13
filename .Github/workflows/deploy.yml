@@ -1,0 +1,59 @@
+name: Deploy Ingestion Pipeline
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write   # Required for Workload Identity Federation
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP via Workload Identity Federation
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SA_EMAIL }}
+          # No key file — WIF exchanges the GitHub OIDC token
+          # for a short-lived GCP access token automatically
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ secrets.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and push Docker image
+        run: |
+          IMAGE="${{ secrets.REGION }}-docker.pkg.dev/${{ secrets.PROJECT_ID }}/gtrends-pipeline/ingestor:${{ github.sha }}"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+
+      - name: Deploy Cloud Run Job
+        run: |
+          gcloud run jobs deploy gtrends-ingestor \
+            --image="${{ env.IMAGE }}" \
+            --region="${{ secrets.REGION }}" \
+            --project="${{ secrets.PROJECT_ID }}" \
+            --service-account="${{ secrets.WIF_SA_EMAIL }}" \
+            --set-env-vars="PROJECT_ID=${{ secrets.PROJECT_ID }},GCS_BUCKET=${{ secrets.GCS_BUCKET }}" \
+            --set-secrets="/secrets/wif-credential-config.json=wif-credential-config:latest" \
+            --task-timeout=600 \
+            --max-retries=3
+
+      - name: Run dbt transforms
+        run: |
+          pip install dbt-bigquery
+          cd dbt
+          export PROJECT_ID=${{ secrets.PROJECT_ID }}
+          dbt deps
+          dbt run --profiles-dir .
+          dbt test --profiles-dir .
