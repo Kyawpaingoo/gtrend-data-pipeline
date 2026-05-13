@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build Docker image, push to Artifact Registry,
+# Build Docker image via Cloud Build, push to Artifact Registry,
 # deploy Cloud Run Job, and create Cloud Scheduler trigger.
 #
 # Usage:
@@ -25,15 +25,11 @@ gcloud artifacts repositories create "${REPO}" \
   --location="${REGION}" \
   --project="${PROJECT_ID}" || true
 
-echo "==> Authenticating Docker with Artifact Registry..."
-gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
-
-echo "==> Building Docker image..."
-docker build -t "${IMAGE}" .
-
-echo "==> Pushing image..."
-docker push "${IMAGE}"
-
+echo "==> Building and pushing image via Cloud Build..."
+gcloud builds submit \
+  --tag "${IMAGE}" \
+  --project="${PROJECT_ID}" \
+  .
 echo "==> Creating GCS bucket (if not exists)..."
 gcloud storage buckets create "gs://${GCS_BUCKET}" \
   --project="${PROJECT_ID}" \
@@ -46,7 +42,7 @@ gcloud run jobs deploy "${JOB_NAME}" \
   --region="${REGION}" \
   --project="${PROJECT_ID}" \
   --service-account="${SA_EMAIL}" \
-  --set-env-vars="PROJECT_ID=${PROJECT_ID},GCS_BUCKET=${GCS_BUCKET},GEO_TARGETS=TH,US,GB,JP,SG" \
+  --set-env-vars="^|^PROJECT_ID=${PROJECT_ID}|GCS_BUCKET=${GCS_BUCKET}|GEO_TARGETS=TH,US,GB,JP,SG" \
   --set-secrets="/secrets/wif-credential-config.json=wif-credential-config:latest" \
   --task-timeout=600 \
   --max-retries=3 \
