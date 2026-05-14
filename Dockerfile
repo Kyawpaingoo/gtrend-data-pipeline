@@ -12,7 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY ingestion/ .
 
-# ENV GOOGLE_APPLICATION_CREDENTIALS=/secrets/wif-credential-config.json
-ENV GOOGLE_APPLICATION_CREDENTIALS=""
+# WIF credential config is mounted via --set-secrets in cloudbuild.yaml
+ENV GOOGLE_APPLICATION_CREDENTIALS=/secrets/wif-credential-config.json
 
 CMD ["python", "ingest.py"]

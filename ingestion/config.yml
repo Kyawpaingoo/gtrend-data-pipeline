@@ -3,7 +3,7 @@
 # Never commit real values — use config.yaml.example as reference.
 
 project_id: "hs-data-pipeline-496214"
-gcs_bucket: "gtrends-data-lake"
+gcs_bucket: "gtrends-data-lake-hs-496214"
 
 # Countries to track (ISO 3166-1 alpha-2 codes)
 geo_targets:

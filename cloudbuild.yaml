@@ -28,7 +28,7 @@ steps:
           --region=asia-southeast1 \
           --project=$PROJECT_ID \
           --set-secrets=/secrets/wif-credential-config.json=wif-credential-config:latest \
-          --set-env-vars="^|^PROJECT_ID=$PROJECT_ID|GCS_BUCKET=gtrends-data-lake-hs-496214|GEO_TARGETS=TH,US,GB,JP,SG" \
+          --set-env-vars="^|^PROJECT_ID=$PROJECT_ID|GCS_BUCKET=gtrends-data-lake|GEO_TARGETS=TH,US,GB,JP,SG" \
           --service-account=gtrends-pipeline-sa@$PROJECT_ID.iam.gserviceaccount.com \
           --task-timeout=600 \
           --max-retries=3 \
