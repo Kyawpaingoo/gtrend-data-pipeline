@@ -1,7 +1,11 @@
 """
 Google Trends Ingestion Script
-Fetches trending topics via pytrends and uploads partitioned JSON to GCS.
+Fetches trending topics via pytrends-modern and uploads partitioned JSON to GCS.
 Uses Workload Identity Federation — no service account key files needed.
+
+Note: pytrends (<=4.9.2) was archived in April 2025. This script uses
+pytrends-modern which relies on Google Trends RSS feeds for trending searches
+and the standard scraping API for interest-over-time / related queries.
 """
 
 import json
@@ -12,7 +16,7 @@ from datetime import datetime, timezone
 
 import pandas as pd
 from google.cloud import storage
-from pytrends.request import TrendReq
+from pytrends_modern import TrendReq, TrendsRSS
 
 from config import load_config
 
@@ -21,18 +25,33 @@ logger = logging.getLogger(__name__)
 
 
 def build_pytrends_client() -> TrendReq:
-    """Initialise pytrends with retries and a realistic request delay."""
+    """Initialise a TrendReq session for interest-over-time / related-query calls."""
     return TrendReq(hl="en-US", tz=360, timeout=(10, 25), retries=3, backoff_factor=0.5)
 
 
-def fetch_trending_searches(pt: TrendReq, geo: str) -> pd.DataFrame:
-    """Return today's real-time trending searches for a given country code."""
+def build_rss_client() -> TrendsRSS:
+    """Initialise a TrendsRSS client for fast, RSS-based trending-search lookups."""
+    return TrendsRSS()
+
+
+def fetch_trending_searches(rss: TrendsRSS, geo: str) -> pd.DataFrame:
+    """
+    Return today's real-time trending searches for a given ISO country code.
+
+    Uses the RSS feed endpoint (pytrends-modern TrendsRSS), which accepts
+    standard ISO 3166-1 alpha-2 codes (e.g. 'TH', 'US') and is significantly
+    faster and more reliable than the now-broken scraping endpoint.
+    """
     logger.info("Fetching trending searches for geo=%s", geo)
-    df = pt.trending_searches(pn=geo)
-    df.columns = ["keyword"]
-    df["geo"] = geo
-    df["rank"] = range(1, len(df) + 1)
-    return df
+    trends = rss.get_trends(geo=geo)
+    if not trends:
+        logger.warning("No trending data returned for geo=%s", geo)
+        return pd.DataFrame(columns=["keyword", "geo", "rank"])
+    rows = [
+        {"keyword": t["title"], "geo": geo, "rank": i + 1}
+        for i, t in enumerate(trends)
+    ]
+    return pd.DataFrame(rows)
 
 
 def fetch_interest_over_time(pt: TrendReq, keywords: list[str], timeframe: str) -> pd.DataFrame:
@@ -100,11 +119,12 @@ def run() -> None:
     # GCS client picks up WIF credentials automatically
     # via GOOGLE_APPLICATION_CREDENTIALS pointing to the WIF credential config file.
     gcs = storage.Client(project=cfg["project_id"])
-    pt = build_pytrends_client()
+    rss = build_rss_client()   # RSS-based: fast + accepts ISO codes
+    pt = build_pytrends_client()  # Scraping-based: interest-over-time / related queries
 
     for geo in cfg["geo_targets"]:
-        # 1. Trending searches
-        trending_df = fetch_trending_searches(pt, geo)
+        # 1. Trending searches (RSS feed — fast, accepts ISO codes)
+        trending_df = fetch_trending_searches(rss, geo)
         top_keywords = trending_df["keyword"].head(5).tolist()
         time.sleep(cfg["request_delay_seconds"])
 
