@@ -13,7 +13,7 @@ _DEFAULTS = {
     "geo_targets": ["TH", "US", "GB", "JP", "SG"],
     "timeframe": "now 7-d",
     "request_delay_seconds": 2,
-    "bq_dataset_raw": "gtrends_raw",
+    "bq_dataset_raw": "hs_gtrend_dataset",
     "bq_dataset_transformed": "gtrends_mart",
 }
 

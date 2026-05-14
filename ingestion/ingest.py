@@ -147,13 +147,20 @@ def load_to_bigquery(
     """
     Append a DataFrame into a BigQuery table using load_table_from_dataframe.
 
-    The table is created automatically on first load (WRITE_APPEND, auto-detect
-    schema). Subsequent loads append rows; schema additions are allowed.
+    Schema is inferred from pyarrow dtypes — do NOT set autodetect=True here,
+    that flag is only for load_table_from_uri/file (CSV/JSON from GCS).
+    run_ts must be cast to datetime before calling so pyarrow maps it to
+    TIMESTAMP rather than STRING.
     """
     table_ref = f"{bq.project}.{dataset_id}.{table_id}"
+
+    # Ensure run_ts is a proper datetime so pyarrow infers TIMESTAMP in BQ.
+    df = df.copy()
+    if "run_ts" in df.columns:
+        df["run_ts"] = pd.to_datetime(df["run_ts"], utc=True)
+
     job_config = bigquery.LoadJobConfig(
         write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-        autodetect=True,
         schema_update_options=[bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION],
     )
     load_job = bq.load_table_from_dataframe(df, table_ref, job_config=job_config)
@@ -185,7 +192,12 @@ def run() -> None:
             build_blob_path("trending", geo, run_ts),
             trending_df,
         )
-        load_to_bigquery(bq, cfg["bq_dataset_raw"], BQ_TABLE_MAP["trending"], trending_df)
+        try:
+            load_to_bigquery(bq, cfg["bq_dataset_raw"], BQ_TABLE_MAP["trending"], trending_df)
+        except Exception:
+            logger.error(
+                "BQ load failed for trending geo=%s.\n%s", geo, traceback.format_exc()
+            )
 
         # 2. Interest over time for top 5 trending keywords
         # NOTE: TrendReq scraping calls may be blocked from GCP IP ranges.
@@ -213,7 +225,12 @@ def run() -> None:
                     var_name="keyword",
                     value_name="interest_value",
                 )
-                load_to_bigquery(bq, cfg["bq_dataset_raw"], BQ_TABLE_MAP["interest_over_time"], iot_long)
+                try:
+                    load_to_bigquery(bq, cfg["bq_dataset_raw"], BQ_TABLE_MAP["interest_over_time"], iot_long)
+                except Exception:
+                    logger.error(
+                        "BQ load failed for interest_over_time geo=%s.\n%s", geo, traceback.format_exc()
+                    )
         except Exception:
             logger.warning(
                 "interest_over_time unavailable for geo=%s (likely GCP IP block). "
@@ -237,7 +254,12 @@ def run() -> None:
                         build_blob_path("related_queries", geo, run_ts),
                         related_df,
                     )
-                    load_to_bigquery(bq, cfg["bq_dataset_raw"], BQ_TABLE_MAP["related_queries"], related_df)
+                    try:
+                        load_to_bigquery(bq, cfg["bq_dataset_raw"], BQ_TABLE_MAP["related_queries"], related_df)
+                    except Exception:
+                        logger.error(
+                            "BQ load failed for related_queries geo=%s.\n%s", geo, traceback.format_exc()
+                        )
             except Exception:
                 logger.warning(
                     "related_queries unavailable for geo=%s (likely GCP IP block). "
