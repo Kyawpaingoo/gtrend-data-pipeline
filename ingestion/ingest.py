@@ -9,6 +9,7 @@ and the standard scraping API for interest-over-time / related queries.
 """
 
 import json
+import traceback
 import logging
 import os
 import time
@@ -140,37 +141,55 @@ def run() -> None:
         )
 
         # 2. Interest over time for top 5 trending keywords
-        iot_df = fetch_interest_over_time(pt, top_keywords, cfg["timeframe"])
-        time.sleep(cfg["request_delay_seconds"])
+        # NOTE: TrendReq scraping calls may be blocked from GCP IP ranges.
+        # Failures are caught and logged so trending data is always persisted.
+        try:
+            iot_df = fetch_interest_over_time(pt, top_keywords, cfg["timeframe"])
+            time.sleep(cfg["request_delay_seconds"])
 
-        if not iot_df.empty:
-            upload_to_gcs(
-                gcs,
-                cfg["gcs_bucket"],
-                build_blob_path("interest_over_time", geo, run_ts),
-                {
-                    "run_ts": run_ts,
-                    "geo": geo,
-                    "keywords": top_keywords,
-                    "rows": iot_df.to_dict(orient="records"),
-                },
+            if not iot_df.empty:
+                upload_to_gcs(
+                    gcs,
+                    cfg["gcs_bucket"],
+                    build_blob_path("interest_over_time", geo, run_ts),
+                    {
+                        "run_ts": run_ts,
+                        "geo": geo,
+                        "keywords": top_keywords,
+                        "rows": iot_df.to_dict(orient="records"),
+                    },
+                )
+        except Exception:
+            logger.warning(
+                "interest_over_time unavailable for geo=%s (likely GCP IP block). "
+                "Skipping.\n%s",
+                geo,
+                traceback.format_exc(),
             )
 
         # 3. Related queries for the #1 trending keyword
         if top_keywords:
-            related = fetch_related_queries(pt, top_keywords[0])
-            time.sleep(cfg["request_delay_seconds"])
-            upload_to_gcs(
-                gcs,
-                cfg["gcs_bucket"],
-                build_blob_path("related_queries", geo, run_ts),
-                {
-                    "run_ts": run_ts,
-                    "geo": geo,
-                    "keyword": top_keywords[0],
-                    "related": related,
-                },
-            )
+            try:
+                related = fetch_related_queries(pt, top_keywords[0])
+                time.sleep(cfg["request_delay_seconds"])
+                upload_to_gcs(
+                    gcs,
+                    cfg["gcs_bucket"],
+                    build_blob_path("related_queries", geo, run_ts),
+                    {
+                        "run_ts": run_ts,
+                        "geo": geo,
+                        "keyword": top_keywords[0],
+                        "related": related,
+                    },
+                )
+            except Exception:
+                logger.warning(
+                    "related_queries unavailable for geo=%s (likely GCP IP block). "
+                    "Skipping.\n%s",
+                    geo,
+                    traceback.format_exc(),
+                )
 
     logger.info("Ingestion complete for run_ts=%s", run_ts)
 
