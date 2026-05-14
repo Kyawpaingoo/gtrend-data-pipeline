@@ -1,6 +1,6 @@
 """
 Google Trends Ingestion Script
-Fetches trending topics via pytrends-modern and uploads partitioned JSON to GCS.
+Fetches trending topics via pytrends-modern and uploads partitioned CSV to GCS.
 Uses Workload Identity Federation — no service account key files needed.
 
 Note: pytrends (<=4.9.2) was archived in April 2025. This script uses
@@ -8,7 +8,7 @@ pytrends-modern which relies on Google Trends RSS feeds for trending searches
 and the standard scraping API for interest-over-time / related queries.
 """
 
-import json
+import io
 import traceback
 import logging
 import os
@@ -80,37 +80,45 @@ def fetch_interest_by_region(pt: TrendReq, keywords: list[str]) -> pd.DataFrame:
     return df
 
 
-def fetch_related_queries(pt: TrendReq, keyword: str) -> dict:
-    """Return top and rising related queries for a single keyword."""
+def fetch_related_queries(pt: TrendReq, keyword: str) -> pd.DataFrame:
+    """
+    Return top and rising related queries for a single keyword as a flat DataFrame.
+
+    Columns: query_type ('top'|'rising'), query, value.
+    """
     logger.info("Fetching related queries for keyword=%s", keyword)
     pt.build_payload([keyword], timeframe="now 7-d")
     related = pt.related_queries()
-    result = {}
+    frames = []
     for query_type in ("top", "rising"):
         df = related.get(keyword, {}).get(query_type)
         if df is not None and not df.empty:
-            result[query_type] = df.to_dict(orient="records")
-    return result
+            df = df.copy()
+            df.insert(0, "query_type", query_type)
+            frames.append(df)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
-def upload_to_gcs(client: storage.Client, bucket_name: str, blob_path: str, payload: dict) -> None:
-    """Serialize payload as JSON and upload to GCS."""
+def upload_to_gcs(client: storage.Client, bucket_name: str, blob_path: str, df: pd.DataFrame) -> None:
+    """Serialize a DataFrame as CSV (no index) and upload to GCS."""
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(blob_path)
+    buf = io.StringIO()
+    df.to_csv(buf, index=False)
     blob.upload_from_string(
-        data=json.dumps(payload, ensure_ascii=False, default=str),
-        content_type="application/json",
+        data=buf.getvalue(),
+        content_type="text/csv",
     )
-    logger.info("Uploaded gs://%s/%s", bucket_name, blob_path)
+    logger.info("Uploaded gs://%s/%s (%d rows)", bucket_name, blob_path, len(df))
 
 
 def build_blob_path(dataset: str, geo: str, run_ts: str) -> str:
     """
     Hive-style partition path for easy BigQuery external table discovery.
-    e.g. trending/geo=TH/date=2025-05-08/run_2025-05-08T06:00:00Z.json
+    e.g. trending/geo=TH/date=2025-05-08/run_2025-05-08T06:00:00Z.csv
     """
     date_part = run_ts[:10]
-    return f"{dataset}/geo={geo}/date={date_part}/run_{run_ts}.json"
+    return f"{dataset}/geo={geo}/date={date_part}/run_{run_ts}.csv"
 
 
 def run() -> None:
@@ -129,15 +137,12 @@ def run() -> None:
         top_keywords = trending_df["keyword"].head(5).tolist()
         time.sleep(cfg["request_delay_seconds"])
 
+        trending_df.insert(0, "run_ts", run_ts)
         upload_to_gcs(
             gcs,
             cfg["gcs_bucket"],
             build_blob_path("trending", geo, run_ts),
-            {
-                "run_ts": run_ts,
-                "geo": geo,
-                "rows": trending_df.to_dict(orient="records"),
-            },
+            trending_df,
         )
 
         # 2. Interest over time for top 5 trending keywords
@@ -148,16 +153,13 @@ def run() -> None:
             time.sleep(cfg["request_delay_seconds"])
 
             if not iot_df.empty:
+                iot_df.insert(0, "run_ts", run_ts)
+                iot_df.insert(1, "geo", geo)
                 upload_to_gcs(
                     gcs,
                     cfg["gcs_bucket"],
                     build_blob_path("interest_over_time", geo, run_ts),
-                    {
-                        "run_ts": run_ts,
-                        "geo": geo,
-                        "keywords": top_keywords,
-                        "rows": iot_df.to_dict(orient="records"),
-                    },
+                    iot_df,
                 )
         except Exception:
             logger.warning(
@@ -170,19 +172,18 @@ def run() -> None:
         # 3. Related queries for the #1 trending keyword
         if top_keywords:
             try:
-                related = fetch_related_queries(pt, top_keywords[0])
+                related_df = fetch_related_queries(pt, top_keywords[0])
                 time.sleep(cfg["request_delay_seconds"])
-                upload_to_gcs(
-                    gcs,
-                    cfg["gcs_bucket"],
-                    build_blob_path("related_queries", geo, run_ts),
-                    {
-                        "run_ts": run_ts,
-                        "geo": geo,
-                        "keyword": top_keywords[0],
-                        "related": related,
-                    },
-                )
+                if not related_df.empty:
+                    related_df.insert(0, "run_ts", run_ts)
+                    related_df.insert(1, "geo", geo)
+                    related_df.insert(2, "keyword", top_keywords[0])
+                    upload_to_gcs(
+                        gcs,
+                        cfg["gcs_bucket"],
+                        build_blob_path("related_queries", geo, run_ts),
+                        related_df,
+                    )
             except Exception:
                 logger.warning(
                     "related_queries unavailable for geo=%s (likely GCP IP block). "
