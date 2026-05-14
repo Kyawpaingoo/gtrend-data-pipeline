@@ -12,7 +12,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY ingestion/ .
 
-# WIF credential config is mounted via --set-secrets in cloudbuild.yaml
-ENV GOOGLE_APPLICATION_CREDENTIALS=/secrets/wif-credential-config.json
+# Cloud Run resolves credentials automatically via the metadata server (ADC)
+# using the service account attached to the job — no credential file needed here.
+# GOOGLE_APPLICATION_CREDENTIALS is only required for external workloads (e.g. local dev,
+# GitHub Actions) that use WIF to impersonate a GCP service account.
 
 CMD ["python", "ingest.py"]
