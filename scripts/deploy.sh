@@ -31,10 +31,15 @@ gcloud builds submit \
   --project="${PROJECT_ID}" \
   .
 echo "==> Creating GCS bucket (if not exists)..."
-gcloud storage buckets create "gs://${GCS_BUCKET}" \
-  --project="${PROJECT_ID}" \
-  --location="${REGION}" \
-  --uniform-bucket-level-access || true
+if ! gcloud storage buckets describe "gs://${GCS_BUCKET}" --project="${PROJECT_ID}" &>/dev/null; then
+  gcloud storage buckets create "gs://${GCS_BUCKET}" \
+    --project="${PROJECT_ID}" \
+    --location="${REGION}" \
+    --uniform-bucket-level-access
+  echo "Bucket gs://${GCS_BUCKET} created."
+else
+  echo "Bucket gs://${GCS_BUCKET} already exists, skipping."
+fi
 
 echo "==> Deploying Cloud Run Job: ${JOB_NAME}..."
 gcloud run jobs deploy "${JOB_NAME}" \

@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY ingestion/ .
 
-ENV GOOGLE_APPLICATION_CREDENTIALS=/secrets/wif-credential-config.json
+# ENV GOOGLE_APPLICATION_CREDENTIALS=/secrets/wif-credential-config.json
+ENV GOOGLE_APPLICATION_CREDENTIALS=""
 
 CMD ["python", "ingest.py"]
