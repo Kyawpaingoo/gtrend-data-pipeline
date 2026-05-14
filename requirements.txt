@@ -1,5 +1,6 @@
 pytrends-modern
 google-cloud-storage==2.16.0
-google-cloud-bigquery==3.21.0
+google-cloud-bigquery[pandas]==3.21.0
 pandas>=2.2.3
+pyarrow>=16.0.0
 pyyaml==6.0.1

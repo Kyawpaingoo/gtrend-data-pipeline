@@ -1,6 +1,7 @@
 """
 Google Trends Ingestion Script
-Fetches trending topics via pytrends-modern and uploads partitioned CSV to GCS.
+Fetches trending topics via pytrends-modern, uploads partitioned CSV to GCS,
+and streams rows directly into BigQuery raw tables.
 Uses Workload Identity Federation — no service account key files needed.
 
 Note: pytrends (<=4.9.2) was archived in April 2025. This script uses
@@ -16,7 +17,7 @@ import time
 from datetime import datetime, timezone
 
 import pandas as pd
-from google.cloud import storage
+from google.cloud import bigquery, storage
 from pytrends_modern import TrendReq, TrendsRSS
 
 from config import load_config
@@ -121,13 +122,53 @@ def build_blob_path(dataset: str, geo: str, run_ts: str) -> str:
     return f"{dataset}/geo={geo}/date={date_part}/run_{run_ts}.csv"
 
 
+# BigQuery table names for each dataset
+BQ_TABLE_MAP = {
+    "trending": "trending",
+    "interest_over_time": "interest_over_time",
+    "related_queries": "related_queries",
+}
+
+
+def ensure_bq_dataset(bq: bigquery.Client, dataset_id: str, location: str = "asia-southeast1") -> None:
+    """Create the BQ dataset if it doesn't already exist."""
+    dataset = bigquery.Dataset(f"{bq.project}.{dataset_id}")
+    dataset.location = location
+    bq.create_dataset(dataset, exists_ok=True)
+    logger.info("BigQuery dataset ready: %s", dataset_id)
+
+
+def load_to_bigquery(
+    bq: bigquery.Client,
+    dataset_id: str,
+    table_id: str,
+    df: pd.DataFrame,
+) -> None:
+    """
+    Append a DataFrame into a BigQuery table using load_table_from_dataframe.
+
+    The table is created automatically on first load (WRITE_APPEND, auto-detect
+    schema). Subsequent loads append rows; schema additions are allowed.
+    """
+    table_ref = f"{bq.project}.{dataset_id}.{table_id}"
+    job_config = bigquery.LoadJobConfig(
+        write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+        autodetect=True,
+        schema_update_options=[bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION],
+    )
+    load_job = bq.load_table_from_dataframe(df, table_ref, job_config=job_config)
+    load_job.result()  # wait for completion
+    logger.info("BQ load -> %s (%d rows)", table_ref, load_job.output_rows)
+
+
 def run() -> None:
     cfg = load_config()
     run_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # GCS client picks up WIF credentials automatically
-    # via GOOGLE_APPLICATION_CREDENTIALS pointing to the WIF credential config file.
     gcs = storage.Client(project=cfg["project_id"])
+    bq = bigquery.Client(project=cfg["project_id"])
+    ensure_bq_dataset(bq, cfg["bq_dataset_raw"])
+
     rss = build_rss_client()   # RSS-based: fast + accepts ISO codes
     pt = build_pytrends_client()  # Scraping-based: interest-over-time / related queries
 
@@ -144,6 +185,7 @@ def run() -> None:
             build_blob_path("trending", geo, run_ts),
             trending_df,
         )
+        load_to_bigquery(bq, cfg["bq_dataset_raw"], BQ_TABLE_MAP["trending"], trending_df)
 
         # 2. Interest over time for top 5 trending keywords
         # NOTE: TrendReq scraping calls may be blocked from GCP IP ranges.
@@ -155,12 +197,23 @@ def run() -> None:
             if not iot_df.empty:
                 iot_df.insert(0, "run_ts", run_ts)
                 iot_df.insert(1, "geo", geo)
+                # GCS: wide CSV (one column per keyword) for archival
                 upload_to_gcs(
                     gcs,
                     cfg["gcs_bucket"],
                     build_blob_path("interest_over_time", geo, run_ts),
                     iot_df,
                 )
+                # BigQuery: melt to long form so schema stays fixed regardless
+                # of which keywords are trending (columns vary each run)
+                keyword_cols = [c for c in iot_df.columns if c not in ("run_ts", "geo", "timestamp")]
+                iot_long = iot_df.melt(
+                    id_vars=["run_ts", "geo", "timestamp"],
+                    value_vars=keyword_cols,
+                    var_name="keyword",
+                    value_name="interest_value",
+                )
+                load_to_bigquery(bq, cfg["bq_dataset_raw"], BQ_TABLE_MAP["interest_over_time"], iot_long)
         except Exception:
             logger.warning(
                 "interest_over_time unavailable for geo=%s (likely GCP IP block). "
@@ -184,6 +237,7 @@ def run() -> None:
                         build_blob_path("related_queries", geo, run_ts),
                         related_df,
                     )
+                    load_to_bigquery(bq, cfg["bq_dataset_raw"], BQ_TABLE_MAP["related_queries"], related_df)
             except Exception:
                 logger.warning(
                     "related_queries unavailable for geo=%s (likely GCP IP block). "
