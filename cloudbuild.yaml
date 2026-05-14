@@ -19,22 +19,21 @@ steps:
 
   # Step 3: Deploy Cloud Run Job with new image
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    entrypoint: gcloud
+    entrypoint: bash
     args:
-      - 'run'
-      - 'jobs'
-      - 'update'
-      - 'gtrends-ingestor'
-      - '--image=asia-southeast1-docker.pkg.dev/$PROJECT_ID/gtrends-pipeline/ingestor:$COMMIT_SHA'
-      - '--region=asia-southeast1'
-      - '--project=$PROJECT_ID'
-      - '--set-secrets=/secrets/wif-credential-config.json=wif-credential-config:latest'
-      - '--set-env-vars=PROJECT_ID=$PROJECT_ID,GCS_BUCKET=your-bucket-name,GEO_TARGETS=TH,US,GB,JP,SG'
-      - '--service-account=gtrends-pipeline-sa@$PROJECT_ID.iam.gserviceaccount.com'
-      - '--task-timeout=600'
-      - '--max-retries=3'
-      - '--memory=512Mi'
-      - '--cpu=1'
+      - '-c'
+      - |
+        gcloud run jobs update gtrends-ingestor \
+          --image=asia-southeast1-docker.pkg.dev/$PROJECT_ID/gtrends-pipeline/ingestor:$COMMIT_SHA \
+          --region=asia-southeast1 \
+          --project=$PROJECT_ID \
+          --set-secrets=/secrets/wif-credential-config.json=wif-credential-config:latest \
+          --set-env-vars="^|^PROJECT_ID=$PROJECT_ID|GCS_BUCKET=gtrends-data-lake-hs-496214|GEO_TARGETS=TH,US,GB,JP,SG" \
+          --service-account=gtrends-pipeline-sa@$PROJECT_ID.iam.gserviceaccount.com \
+          --task-timeout=600 \
+          --max-retries=3 \
+          --memory=512Mi \
+          --cpu=1
 
 substitutions:
   _REGION: asia-southeast1
